@@ -40,6 +40,11 @@ POSITIVE = [
     ("LL010", "sending OTP to 0771234567"),
     ("LL010", "sending OTP to +94 77 123 4567"),
     ("LL010", "call +1 415 555 2671"),
+    ("LL010", "otp to 077 1234567"),
+    ("LL010", "otp to +94771234567"),
+    # A full stop that ends a sentence doesn't hide a number.
+    ("LL007", "charged 4111111111111111."),
+    ("LL008", "NIC is 853400937V."),
 ]
 
 
@@ -70,6 +75,13 @@ NEGATIVE = [
     "id 123456789012",  # 12 digits but not a valid NIC day
     "tz offset +05:30",
     "user 42 logged in",
+    # False positives found in real logs (Loghub), kept so they stay fixed.
+    "is added to blk_5165786360127153975 size 67108864",  # HDFS block ID, passes Luhn
+    "081110 070326 7430 WARN dfs.DataNode",  # a time then a process ID
+    "msgid=<200511091901.jA9J1UvC004306@eadmin1>",  # compact timestamp in a message ID
+    "wtoken = AppWindowToken{9f4ef63 token=Token{a64f992 ActivityRecord}",
+    "Bad activity token: android.os.BinderProxy@2bd79ce",
+    "Could not get event name for stream/token: com.apple.xpc.activity/4505: 132",
 ]
 
 

@@ -69,6 +69,11 @@ def entropy(value: str) -> float:
     return -sum(c / n * math.log2(c / n) for c in Counter(value).values())
 
 
+# Object descriptions, like `Token{a64f992}`, `Settings(...)` or Java's `BinderProxy@2bd79ce`.
+_OBJECT_REPR = re.compile(r"[A-Za-z_][\w.$]*[{(@]")
+# Dotted names, like `com.apple.xpc.activity/4505` or `app.settings.token`.
+_DOTTED_NAME = re.compile(r"[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)+(?:[/:][\w/:.-]*)?")
+
 _PLACEHOLDERS = {"", "redacted", "masked", "hidden", "filtered", "none", "null", "true", "false"}
 
 
@@ -76,6 +81,8 @@ def _is_placeholder(value: str) -> bool:
     if value.startswith(("<", "%", "{", "$")):  # object reprs, templates, env references
         return True
     if set(value) <= set("*xX•#."):
+        return True
+    if _OBJECT_REPR.match(value):
         return True
     return value.strip("[]()*").lower() in _PLACEHOLDERS
 
@@ -138,6 +145,8 @@ def _find_credential(text: str) -> Iterator[tuple[int, int, str]]:
             # Keys like `max_tokens=100` or `token=expired` are not secrets.
             if len(value) < 8 or value.isdigit() or entropy(value) < 3.0:
                 continue
+            if _DOTTED_NAME.fullmatch(value):
+                continue
         start, end = m.span("value")
         yield start, end, m.group("key")
 
@@ -169,7 +178,14 @@ def _is_card(raw: str) -> bool:
     return 13 <= len(digits) <= 19 and digits.startswith(_CARD_PREFIXES) and luhn(digits)
 
 
-_find_card = _regex(r"(?<![\d-])\d(?:[ -]?\d){12,18}(?![\d-])", "card number", valid=_is_card)
+# A number glued to a word (`blk_5165...`) or inside a dotted token (`<2005110919.jA9...`) is
+# an ID, not a card or NIC. A full stop that ends a sentence is fine.
+_ALONE_BEFORE = r"(?<![\w.-])"
+_ALONE_AFTER = r"(?![\w-]|\.\w)"
+
+_find_card = _regex(
+    _ALONE_BEFORE + r"\d(?:[ -]?\d){12,18}" + _ALONE_AFTER, "card number", valid=_is_card
+)
 
 
 def _valid_nic_day(day: str) -> bool:
@@ -178,8 +194,8 @@ def _valid_nic_day(day: str) -> bool:
     return 1 <= d <= 366 or 501 <= d <= 866
 
 
-_NIC_NEW = re.compile(r"(?<!\w)(?:19|20)\d{2}(?P<day>\d{3})\d{5}(?!\w)")
-_NIC_OLD = re.compile(r"(?<!\w)\d{2}(?P<day>\d{3})\d{4}[VvXx](?!\w)")
+_NIC_NEW = re.compile(_ALONE_BEFORE + r"(?:19|20)\d{2}(?P<day>\d{3})\d{5}" + _ALONE_AFTER)
+_NIC_OLD = re.compile(_ALONE_BEFORE + r"\d{2}(?P<day>\d{3})\d{4}[VvXx]" + _ALONE_AFTER)
 
 
 def _find_nic(text: str) -> Iterator[tuple[int, int, str]]:
@@ -194,8 +210,12 @@ _find_email = _regex(
 )
 
 _find_phone = _chain(
-    # Sri Lankan mobiles written locally (077 123 4567) or with +94 / 0094.
-    _regex(r"(?<![\d+])(?:\+94|0094|0)[\s-]?7[0-8][\s-]?\d{3}[\s-]?\d{4}(?!\d)", "phone number"),
+    # Sri Lankan mobiles, grouped the way people write them: 0771234567, 077 1234567,
+    # 077 123 4567, +94 77 123 4567. Free grouping matched times like `070326 7430`.
+    _regex(
+        r"(?<![\d+])(?:\+94[\s-]?|0094[\s-]?|0)7[0-8](?:\d{7}|[\s-]\d{7}|[\s-]\d{3}[\s-]\d{4})(?!\d)",
+        "phone number",
+    ),
     # Any number written in international form: +, country code, then 7 to 13 digits.
     _regex(r"(?<![\w+])\+[1-9]\d{0,2}[\s-]?(?:\d[\s-]?){6,12}\d(?!\d)", "phone number"),
 )
