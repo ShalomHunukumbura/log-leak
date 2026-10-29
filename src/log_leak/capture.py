@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import linecache
 import logging
+import re
 import traceback
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
-from .detectors import Detector, detect, redact
+from .detectors import DETECTORS, Detector, detect, redact
 
 # Attributes every LogRecord has. Anything else on a record came from `extra=`.
 _STANDARD_ATTRS = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {
@@ -18,6 +20,9 @@ _STANDARD_ATTRS = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) 
 # A logged response body can be megabytes. The start of it is enough to judge.
 _MAX_SCAN = 100_000
 _MAX_SHOWN = 200
+
+# `# log-leak: ignore` skips every detector, `# log-leak: ignore[LL009, LL010]` only those.
+_IGNORE_COMMENT = re.compile(r"#\s*log-leak:\s*ignore(?:\[(?P<ids>[^\]]*)\])?", re.IGNORECASE)
 
 
 @dataclass
@@ -39,11 +44,18 @@ class Leak:
 
 
 class LeakHandler(logging.Handler):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        detectors: Sequence[Detector] = DETECTORS,
+        ignore_loggers: Sequence[str] = (),
+    ) -> None:
         super().__init__(level=logging.NOTSET)
+        self.detectors = list(detectors)
+        self.ignore_loggers = tuple(ignore_loggers)
         self.current_test: str | None = None
         self.records_checked = 0
         self.leaks: dict[tuple[str, int, str, str], Leak] = {}
+        self._comments: dict[tuple[str, int], frozenset[str] | None] = {}
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -52,10 +64,14 @@ class LeakHandler(logging.Handler):
             self.handleError(record)
 
     def _check(self, record: logging.LogRecord) -> None:
+        if _logger_matches(record.name, self.ignore_loggers):
+            return
         self.records_checked += 1
         for part, text in _parts(record):
-            hits = detect(text[:_MAX_SCAN])
+            hits = detect(text[:_MAX_SCAN], self.detectors)
             for detector in dict.fromkeys(h.detector for h in hits):
+                if self._ignored_inline(record, detector):
+                    continue
                 key = (record.pathname, record.lineno, detector.id, part)
                 leak = self.leaks.get(key)
                 if leak is None:
@@ -75,6 +91,34 @@ class LeakHandler(logging.Handler):
                 test = self.current_test or "(outside any test)"
                 if test not in leak.tests:
                     leak.tests.append(test)
+
+
+    def _ignored_inline(self, record: logging.LogRecord, detector: Detector) -> bool:
+        site = (record.pathname, record.lineno)
+        if site not in self._comments:
+            self._comments[site] = _ignore_comment(*site)
+        ids = self._comments[site]
+        return ids is not None and (not ids or detector.id in ids)
+
+
+def _ignore_comment(pathname: str, lineno: int) -> frozenset[str] | None:
+    """IDs named by an ignore comment on the call's first line, or alone on the line
+    above. An empty set means all detectors. None means no comment."""
+    candidates = [linecache.getline(pathname, lineno)]
+    above = linecache.getline(pathname, lineno - 1).strip() if lineno > 1 else ""
+    if above.startswith("#"):
+        candidates.append(above)
+    for line in candidates:
+        m = _IGNORE_COMMENT.search(line)
+        if m:
+            ids = m.group("ids") or ""
+            return frozenset(i.strip().upper() for i in ids.split(",") if i.strip())
+    return None
+
+
+def _logger_matches(name: str, prefixes: Sequence[str]) -> bool:
+    """True for `sqlalchemy.engine` and its children, like `sqlalchemy.engine.Engine`."""
+    return any(name == p or name.startswith(p + ".") for p in prefixes)
 
 
 def _parts(record: logging.LogRecord) -> Iterator[tuple[str, str]]:
