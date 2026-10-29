@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pytest-log-leak"
+version = "0.1.0"
+description = "Fail your test run when personal data or secrets show up in your logs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Shalom Hunukumbura" }]
+keywords = ["pytest", "logging", "pii", "secrets", "privacy", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/ShalomHunukumbura/log-leak"
+Issues = "https://github.com/ShalomHunukumbura/log-leak/issues"
+
+[project.entry-points.pytest11]
+log_leak = "log_leak.plugin"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/log_leak"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Our own suite logs fake leaks on purpose inside pytester runs, so the plugin
+# stays off for the outer run. Each pytester run loads it fresh.
+addopts = "-p no:log_leak -p pytester"
