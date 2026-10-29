@@ -12,7 +12,7 @@ license = "MIT"
 authors = [{ name = "Shalom Hunukumbura" }]
 keywords = ["pytest", "logging", "pii", "secrets", "privacy", "security"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Framework :: Pytest",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
