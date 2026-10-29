@@ -64,17 +64,80 @@ That's it. pytest loads the plugin on its own, so the next `pytest` run is check
 It checks the log message, the messages of any exception logged with
 `log.exception(...)`, and fields passed with `extra={...}`.
 
+## When a leak is fine
+
+Some logged values are meant to be public, like a support address. Silence one call with a
+comment on its first line, or alone on the line above:
+
+```python
+log.info("contact %s", SUPPORT_EMAIL)  # log-leak: ignore[LL009]
+
+# log-leak: ignore -- every detector, for this call only
+log.info(
+    "sent receipt to %s",
+    order.email,
+)
+```
+
+`pytest --log-leak-explain LL009` prints why a detector exists and how to fix what it
+finds. `--log-leak-explain all` lists them.
+
+## Adopting it in an existing project
+
+A big project may have dozens of leaks on day one. Record them in a baseline file and fix
+them over time:
+
+```bash
+pytest --log-leak-update-baseline     # writes .log-leak-baseline.json; commit it
+pytest                                # now only new leaks fail the run
+```
+
+Baseline entries are keyed by file, function, logger and detector, not line number, so
+editing code above a log call doesn't make an old leak look new. When an entry stops
+showing up, log-leak tells you, and the next `--log-leak-update-baseline` after a full run
+drops it.
+
 ## Configure
 
 In `pytest.ini`, or `[tool.pytest.ini_options]` in `pyproject.toml`:
 
 ```ini
 [pytest]
-log_leak_level = INFO    # lowest level checked; INFO is what production usually logs
-log_leak_fail = true     # false: report leaks without failing the run
+# Lowest level checked. Production usually logs INFO.
+log_leak_level = INFO
+# false: report leaks without failing the run.
+log_leak_fail = true
+# Detectors to skip everywhere.
+log_leak_ignore = LL010
+# Loggers to skip, with their children.
+log_leak_ignore_loggers = sqlalchemy.engine
+# Where the baseline lives.
+log_leak_baseline = .log-leak-baseline.json
 ```
 
 Turn it off for one run with `pytest -p no:log_leak`.
+
+## GitHub Actions
+
+Nothing to set up. When `GITHUB_ACTIONS=true`, log-leak also prints each leak as an
+annotation, so it shows up on the pull request diff at the logging line.
+
+## How accurate is it
+
+A checker that fails your build has to be almost never wrong, or people turn it off. The
+detectors are tuned against [Loghub](https://github.com/logpai/loghub): 32,000 real log lines
+from 16 systems, including Hadoop, Spark, OpenSSH, Android, macOS and Windows.
+
+The first run gave 79 hits. 67 were false positives: HDFS block IDs that pass the card
+checksum, times followed by process IDs that looked like phone numbers, compact timestamps
+that looked like NIC numbers, and object descriptions like `token=Token{a64f992}`. Each is
+fixed and kept as a regression test. The other 12 hits are real email addresses: two
+personal ones in the macOS logs (one inside an iCloud URL, logged 10 times) and Red Hat's
+build address in a Linux kernel banner.
+
+Run it yourself with `uv run python bench/loghub.py`. Loghub contains almost no secrets, so
+it measures false positives, not how many real leaks are caught. That side is covered by the
+test suite.
 
 ## Limits
 
@@ -85,11 +148,6 @@ Turn it off for one run with `pytest -p no:log_leak`.
 - It finds what your tests exercise. Code paths with no test are not checked.
 - `caplog.set_level(...)` in a test raises the level for that test, so lower-level records
   in it aren't created and can't be checked.
-
-## Status
-
-Early. Planned next: an allowlist and a baseline file so existing projects can adopt it
-without fixing everything on day one, `--explain <ID>`, and GitHub annotations.
 
 ## License
 
